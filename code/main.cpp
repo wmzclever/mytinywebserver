@@ -15,6 +15,7 @@
 #include<pthread.h>
 #include<exception>
 #include<semaphore.h>
+#include"mytimer.h"
 #define MAX_FD 20
 #define MAX_EVENT 10000
 //添加信号捕捉
@@ -47,6 +48,7 @@ int main(int argc, char* argv[])
   addsig(SIGPIPE, SIG_IGN);
 
   ThreadPool* pool = nullptr;
+
   // 如果有异常就立刻退出程序
   try
   {
