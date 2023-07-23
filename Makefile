@@ -4,8 +4,6 @@ CFLAGS = -std=c++14 -O2 -Wall -g
 # 文件路径
 DIR := .
 DIR += ./code/buffer ./code/http_conn ./code/mytimer ./code/pool ./code/locker ./code
-# 结果存放地址
-OUTPUT := ./output
 # 依赖的头文件
 INCS := $(foreach dir,$(DIR),-I$(dir))
 # 源代码地址
@@ -22,7 +20,6 @@ main : $(OBJS)
 
 $(OBJS) : %.o: %.cpp
 			@echo complie
-			@mkdir -p $(OUTPUT)
 			$(CXX) -MMD -MP -c $(CFLAGS) $(INCS) $< -o $@ 
 
 # 引入依赖文件，-表示如果依赖文件不存在则忽略错误继续
