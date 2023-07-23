@@ -5,6 +5,12 @@
 解决：采用lambda表达式
 2.多个浏览器连接式发生错误，连接socket没有改变，发现write函数中返回len值了，但是最后len总是会返回-1，所以在主线程中最终总是会关闭连接
 writev成功时总是返回0 失败返回-1，所以使用一个cnt累加读取的文件长度
+3.编译会有warning，提示：
+code/./pool/pthread_pool.h:35:8: warning: ‘ThreadPool::isclose’ will be initialized after
+经过查找资料，发现了问题：变量声明与构造函数初始化时候的位置最好保持一致。
+4.makefile有问题，编译会提示multiple definition，后来发现是写法不对
+正确写法：只有这样会同名匹配.o和.cpp文件；
+$(OBJS) : %.o: %.cpp
 
 ## 待完成
 

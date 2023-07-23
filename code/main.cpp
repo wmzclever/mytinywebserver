@@ -9,31 +9,46 @@
 #include<fcntl.h>
 #include<sys/epoll.h>
 #include<signal.h>
-#include "pthread_pool.h"
 #include<cstring>
-#include "http_conn.h"
 #include<pthread.h>
 #include<exception>
 #include<semaphore.h>
-#include"mytimer.h"
+#include "./http_conn/http_conn.h"
+#include "./pool/pthread_pool.h"
+#include"./mytimer/mytimer.h"
+#include <memory>
+
+using namespace std;
+// 最大socket连接数量
 #define MAX_FD 20
+// 最大的事件数量
 #define MAX_EVENT 10000
-//添加信号捕捉
+//向epoll队列增删改信号捕捉
 extern void addfd(int epollfd, int fd, bool one_shot);
 extern void removefd(int epollfd, int fd);
 extern void modfd(int epollfd, int fd, int env);
-// class sem;
+
 
 //添加信号捕捉
 void addsig(int sig, void(*handler)(int))
 {
+  // 初始化信号结构体
   struct sigaction sa;
   bzero(&sa, sizeof(sa));
   sa.sa_handler = handler;
   // sa.sa_flags = 0;
-  //运行期间屏蔽其他信号，反之被其他信号中断
+  //运行期间屏蔽其他信号，防止被其他信号中断
   sigfillset(&sa.sa_mask);
+  // 注册信号
   sigaction(sig, &sa, NULL);
+}
+// 关闭连接的回调函数
+void closeConn(http_conn* client)
+{
+  if (!client)
+    return;
+  client->Close();
+  cout << "timesout close ok" << endl;
 }
 
 int main(int argc, char* argv[])
@@ -43,12 +58,16 @@ int main(int argc, char* argv[])
     printf("argv is not enough\n");
     exit(-1);
   }
+  // 服务器端 端口号
   int port = atoi(argv[1]);
   //忽略SIGPIPE信号，由于向一个读端关闭的socket或管道中写数据会触发SIGPIPE默认终止进程
   addsig(SIGPIPE, SIG_IGN);
 
   ThreadPool* pool = nullptr;
-
+  // 初始化堆定时器
+  unique_ptr<HeapTimer> timer(new HeapTimer);
+  // 设置默认超时时间
+  int timeOutMs = 5000;
   // 如果有异常就立刻退出程序
   try
   {
@@ -59,9 +78,11 @@ int main(int argc, char* argv[])
   }
   //保存所有客户端信息
   http_conn* users = new http_conn[MAX_FD];
+
+
   int listenfd = socket(PF_INET, SOCK_STREAM, 0);
 
-  //端口复用,注意该行位置，在socket创建之后
+  //开启端口复用,注意该行位置，在socket创建之后
   int reuse = 1;
   setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
@@ -83,6 +104,8 @@ int main(int argc, char* argv[])
     perror("listen");
     exit(1);
   }
+
+  // 使用epoll监听事件
   epoll_event events[MAX_EVENT];
   int epollfd = epoll_create(5);
   addfd(epollfd, listenfd, false);
@@ -90,7 +113,16 @@ int main(int argc, char* argv[])
   http_conn::m_user_count = 0;
   while (true)
   {
-    int num = epoll_wait(epollfd, events, MAX_EVENT, -1);
+    int timeMs = -1;
+    if (timeOutMs > 0)
+    {
+      // 删除堆顶超时连接，并获得下一个最小的超时时间，没有连接则返回-1
+      timeMs = timer->getNextTick();
+    }
+    // !!!等待超时时间过了就之间返回0，停止阻塞；若设置为-1就会一直阻塞在epoll_wait等待事件发生
+    //这样做可以及时处理超时事件，将其移除最小堆并调用回调函数关闭连接；
+    // 一个小重点
+    int num = epoll_wait(epollfd, events, MAX_EVENT, timeMs);
     if (num < 0 && errno != EINTR)
     {
       printf("epoll failure\n");
@@ -109,9 +141,11 @@ int main(int argc, char* argv[])
           close(connfd);
           continue;
         }
-        users[connfd].init(connfd, client_address);
+        users[connfd].init(connfd, client_address, timeOutMs);
+        // 将新连接的socket加入最小堆定时器
+        timer->add(connfd, timeOutMs, [&users, connfd] {closeConn(&users[connfd]);});
         // cout << "listen successed" << endl;
-        cout << "connfd:" << connfd << endl;
+        // cout << "connfd:" << connfd << endl;
       }
       //事件出错，关闭链接
       else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR))
@@ -121,7 +155,9 @@ int main(int argc, char* argv[])
       //读事件
       else if (events[i].events & EPOLLIN) {
         // 模拟proactor模式，主线程负责读写数据，子线程负责处理逻辑
-        // cout << "read wait" << endl;c
+        // cout << "read wait" << endl;
+        // 重置定时器
+        timer->adjust(sockfd, timeOutMs);
         if (users[sockfd].read(&errno)) {
           // printf("user addr1:%x\n", users[sockfd]);
           // pool->append(bind(&http_conn::process, users[sockfd]));
@@ -138,6 +174,7 @@ int main(int argc, char* argv[])
       else if (events[i].events & EPOLLOUT)
       {
         // cout << "main test printf:\n";
+        timer->adjust(sockfd, timeOutMs);
         users[sockfd].write_buffer.print_test();
         // getchar();
         if (users[sockfd].write(&errno))
