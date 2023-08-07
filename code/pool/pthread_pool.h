@@ -9,16 +9,26 @@
 #include <queue>
 #include "../locker/locker.h"
 using namespace std;
+
+enum class RejectionPolicy
+{
+  ABORT,
+  CALLER_RUNS,
+  DISCARD,
+  DISCARD_OLDEST
+};
+
 //线程池类，模板类为了代码复用,T表示任务函数
 class ThreadPool
 {
 public:
-  ThreadPool(int thread_number = 8, int max_requests = 1000);
+  ThreadPool(int thread_number = 8, int max_requests = 1000, int max_workqueue_num = 3000, RejectionPolicy policy_ = RejectionPolicy::CALLER_RUNS);
   ~ThreadPool();
   template<typename T>
   bool append(T&& work);
   void run();
 private:
+  int max_workqueue_num;
   //线程池工作线程数量
   int m_thread_number;
   //线程数组
@@ -32,11 +42,13 @@ private:
   //信号量表示队列中任务数量
   sem m_queuestat;
   //是否关闭
-  bool isclose = true;
+  bool isclose = false;
+  // 拒绝策略
+  RejectionPolicy policy;
   static void* worker(void* arg);
 };
 
-ThreadPool::ThreadPool(int thread_number, int max_requests) :m_thread_number(thread_number), m_threads(nullptr), m_max_request(max_requests), isclose(false)
+ThreadPool::ThreadPool(int thread_number, int max_requests, int max_workqueue_num, RejectionPolicy policy_) :max_workqueue_num(max_workqueue_num), m_thread_number(thread_number), m_threads(nullptr), m_max_request(max_requests), isclose(false), policy(policy_)
 {
   if ((thread_number <= 0) || (max_requests <= 0))
     throw std::exception();
@@ -75,6 +87,25 @@ bool ThreadPool::append(T&& request)
 {
   m_queuemutex.lock();
   // 完美转发，保留原有的类型，否则即使request是右值，但是这个变量名仍是左值；
+  switch (policy)
+  {
+  case RejectionPolicy::ABORT:
+    m_queuemutex.unlock();
+    return false;
+  case RejectionPolicy::CALLER_RUNS:
+    m_queuemutex.unlock();
+    request();
+    return true;
+  case RejectionPolicy::DISCARD:
+    m_queuemutex.unlock();
+    return true;
+  case RejectionPolicy::DISCARD_OLDEST:
+    if (!m_workqueue.empty())
+    {
+      m_workqueue.pop();
+    }
+    break;
+  }
   m_workqueue.push(forward<T>(request));
   m_queuemutex.unlock();
   m_queuestat.post();
@@ -96,6 +127,8 @@ void ThreadPool::run()
     }
     //处理工作
     request();
+    // pthread_t tid = pthread_self();
+    // cout << "thread:" << tid << endl;
   }
 }
 

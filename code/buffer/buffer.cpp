@@ -31,9 +31,9 @@ size_t Buffer::readfd(int fd, int* saveerrno) {
   iov[1].iov_len = strlen(buf);
   // cout << "begin read" << endl;
   ssize_t len = readv(fd, iov, 2);
-  // cout << "read len" << len << endl;
+  // cout << "read len:" << len << endl;
   int Writeable = writeable();
-  if (len < 0)
+  if (len < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
   {
     perror("Buffer::readfd");
     *saveerrno = errno;
@@ -44,7 +44,7 @@ size_t Buffer::readfd(int fd, int* saveerrno) {
   }
   else {
     writePos = m_buffer.size();
-    makespace(len - Writeable);
+    // makespace(len - Writeable);
     // copy(buf, buf + len - Writeable, begin_write());
     // writePos += len - Writeable;
     append(buf, len - Writeable);

@@ -20,9 +20,9 @@
 
 using namespace std;
 // 最大socket连接数量
-#define MAX_FD 20
+#define MAX_FD 30000
 // 最大的事件数量
-#define MAX_EVENT 10000
+#define MAX_EVENT 30000
 //向epoll队列增删改信号捕捉
 extern void addfd(int epollfd, int fd, bool one_shot);
 extern void removefd(int epollfd, int fd);
@@ -48,8 +48,9 @@ void closeConn(http_conn* client)
   if (!client)
     return;
   client->Close();
-  cout << "timesout close ok" << endl;
+  // cout << "timesout close ok" << endl;
 }
+
 
 int main(int argc, char* argv[])
 {
@@ -67,18 +68,17 @@ int main(int argc, char* argv[])
   // 初始化堆定时器
   unique_ptr<HeapTimer> timer(new HeapTimer);
   // 设置默认超时时间
-  int timeOutMs = 5000;
+  int timeOutMs = 50000;
   // 如果有异常就立刻退出程序
   try
   {
-    pool = new ThreadPool();
+    pool = new ThreadPool(20, 2000);
   }
   catch (...) {
     exit(-1);
   }
   //保存所有客户端信息
   http_conn* users = new http_conn[MAX_FD];
-
 
   int listenfd = socket(PF_INET, SOCK_STREAM, 0);
 
@@ -107,8 +107,14 @@ int main(int argc, char* argv[])
 
   // 使用epoll监听事件
   epoll_event events[MAX_EVENT];
-  int epollfd = epoll_create(5);
+  int epollfd = epoll_create(512);
   addfd(epollfd, listenfd, false);
+
+  // struct epoll_event ev = { 0 };
+  // ev.data.fd = listenfd;
+  // ev.events = EPOLLIN;
+  // epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev);
+
   http_conn::m_epollfd = epollfd;
   http_conn::m_user_count = 0;
   while (true)
@@ -123,6 +129,7 @@ int main(int argc, char* argv[])
     //这样做可以及时处理超时事件，将其移除最小堆并调用回调函数关闭连接；
     // 一个小重点
     int num = epoll_wait(epollfd, events, MAX_EVENT, timeMs);
+    // cout << "wait end" << endl;
     if (num < 0 && errno != EINTR)
     {
       printf("epoll failure\n");
@@ -133,19 +140,27 @@ int main(int argc, char* argv[])
       int sockfd = events[i].data.fd;
       if (sockfd == listenfd)
       {
-        struct sockaddr_in client_address;
-        socklen_t client_addrlen = sizeof(client_address);
-        int connfd = accept(listenfd, (struct sockaddr*)&client_address, &client_addrlen);
-        if (http_conn::m_user_count >= MAX_FD)
-        {
-          close(connfd);
-          continue;
-        }
-        users[connfd].init(connfd, client_address, timeOutMs);
-        // 将新连接的socket加入最小堆定时器
-        timer->add(connfd, timeOutMs, [&users, connfd] {closeConn(&users[connfd]);});
+        do {
+          // cout << "come in" << endl;
+          struct sockaddr_in client_address;
+          socklen_t client_addrlen = sizeof(client_address);
+          int connfd = accept(listenfd, (struct sockaddr*)&client_address, &client_addrlen);
+          if (connfd <= 0) {
+            // cout << "while out" << endl;
+            break;
+          }
+          if (http_conn::m_user_count >= MAX_FD)
+          {
+            cerr << "连接数超过限制" << endl;
+            close(connfd);
+            break;
+          }
+          users[connfd].init(connfd, client_address, timeOutMs);
+          // 将新连接的socket加入最小堆定时器
+          timer->add(connfd, timeOutMs, [&users, connfd] {closeConn(&users[connfd]);});
+        } while (true);
         // cout << "listen successed" << endl;
-        // cout << "connfd:" << connfd << endl;
+// cout << "connfd:" << connfd << endl;
       }
       //事件出错，关闭链接
       else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR))
@@ -158,35 +173,39 @@ int main(int argc, char* argv[])
         // cout << "read wait" << endl;
         // 重置定时器
         timer->adjust(sockfd, timeOutMs);
-        if (users[sockfd].read(&errno)) {
+        // int readNum = 0;
+        // if ((readNum = users[sockfd].read(&errno)) > 0) {
           // printf("user addr1:%x\n", users[sockfd]);
           // pool->append(bind(&http_conn::process, users[sockfd]));
-          pool->append([&users, sockfd] {users[sockfd].process();});
-          // cout << "main test printf:\n";
-          // users[sockfd].write_buffer.print_test();
-          // getchar();
-        }
-        else {
-          users[sockfd].close_conn();
-        }
+        pool->append([&users, sockfd] {users[sockfd].process();});
+        // cout << "main test printf:\n";
+        // users[sockfd].write_buffer.print_test();
+        // getchar();
+        // cout << "读事件成功" << endl;
+      // }
+      // else {
+      //   users[sockfd].Close();
+      // }
       }
       //写事件
       else if (events[i].events & EPOLLOUT)
       {
         // cout << "main test printf:\n";
         timer->adjust(sockfd, timeOutMs);
-        users[sockfd].write_buffer.print_test();
+        // users[sockfd].write_buffer.print_test();
         // getchar();
-        if (users[sockfd].write(&errno))
-        {
+        // int writeNum = 0;
+        // if ((writeNum = users[sockfd].write(&errno)) > 0)
+        // {
           // cout << "write end in main" << endl;
           // pool->append(bind(&http_conn::process_afterWrite, users[sockfd]));
-          pool->append([&users, sockfd] {users[sockfd].process_afterWrite();});
-        }
-        else {
-          // cout << "write fail in main" << endl;
-          users[sockfd].close_conn();
-        }
+        pool->append([&users, sockfd] {users[sockfd].process_afterWrite();});
+        // cout << "写事件成功" << endl;
+      // }
+      // else {
+      //   // cout << "write fail in main" << endl;
+      //   users[sockfd].close_conn();
+      // }
       }
     }
   }

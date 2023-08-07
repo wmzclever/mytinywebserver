@@ -11,9 +11,13 @@ code/./pool/pthread_pool.h:35:8: warning: ‘ThreadPool::isclose’ will be init
 4.makefile有问题，编译会提示multiple definition，后来发现是写法不对
 正确写法：只有这样会同名匹配.o和.cpp文件；
 $(OBJS) : %.o: %.cpp
+5.经过webbench测试发现速度很慢，只有1000pages/min  32600bytes/sec
+
 
 ## 待完成
 
-* 定时器，能够实现客户端断开一段时间后，服务器端自动释放连接；
+* 定时器，能够实现客户端断开一段时间后，服务器端自动释放连接； done! 
 * 实现服务器优雅退出，使用管道和信号机制在收到终止信号之后向服务器发送，服务器结束；
 * 运用面向对象的思维优化代码，使得代码逻辑更清晰；
+* 加入日志
+* 加入MySQL允许用户注册登录

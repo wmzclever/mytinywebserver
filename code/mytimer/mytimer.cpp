@@ -37,6 +37,7 @@ void HeapTimer::tick() {
     // 超时就调用回调函数
     node.func();
     pop();
+    // std::cout << "heap size:" << heap.size() << std::endl;
   }
 }
 

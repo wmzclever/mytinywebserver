@@ -90,6 +90,7 @@ void http_response::makeresponse(Buffer& m_buffer) {
   addstateLine(m_buffer);
   addheader(m_buffer);
   addcontent(m_buffer);
+  // m_buffer.print_test();
 }
 
 // 请求首行
@@ -105,7 +106,7 @@ void http_response::addstateLine(Buffer& m_buffer) {
     status = CODE_STATUS.find(400)->second;
     path = CODE_PATH.find(code)->second;
   }
-  m_buffer.append("HTTP/1.1 " + to_string(code) + " " + status + "\r\n");
+  m_buffer.append("HTTP/1.0 " + to_string(code) + " " + status + "\r\n");
 }
 
 // 请求头
@@ -136,6 +137,7 @@ void http_response::addcontent(Buffer& m_buffer) {
     perror("mmap");
     mmret = nullptr;
     errorContent(m_buffer, "FILE NOT FOUND!");
+    close(fd);
     return;
   }
   mmFile = (char*)mmret;

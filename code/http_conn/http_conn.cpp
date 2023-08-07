@@ -77,19 +77,21 @@ void http_conn::close_conn()
 ssize_t http_conn::read(int* saveErrno)
 {
   //读取到的字节
-  int bytes_read = -1;
+  int bytes_read = 0;
+  int res = -1;
   while (true)
   {
     //
-    bytes_read = m_buffer.readfd(m_sockfd, saveErrno);
-    if (bytes_read <= 0)
+    res = m_buffer.readfd(m_sockfd, saveErrno);
+    if (res <= 0)
     {
       break;
     }
+    bytes_read += res;
   }
   // test
-  cout << "read successeds" << endl;
-  m_buffer.print_test();
+  // cout << "read successeds" << endl;
+  // m_buffer.print_test();
   return bytes_read;
 }
 
@@ -97,22 +99,25 @@ ssize_t http_conn::write(int* saveErrno)
 {
   ssize_t len = -1;
   ssize_t cnt = 0;
-  cout << "begin write" << endl;
+  // cout << "begin write" << endl;
+  // write_buffer.print_test();
   while (true)
   {
     len = writev(m_sockfd, iov_, iovCnt_);
+    // cout << "write" << endl;
     cnt += len;
     // cout << iov_[0].iov_len << " " << iov_[1].iov_len << endl;
+    // cout << "write successed:" << len << endl;
     // printf("iov:%x", iov_);s
-    if (len < 0)
+    if (len < 0 && errno != EAGAIN && errno != EWOULDBLOCK)
     {
       *saveErrno = errno;
       perror("writev");
-      break;
+      return -1;
     }
     if (iov_[0].iov_len + iov_[1].iov_len == 0)
     {
-      cout << "write over" << endl;
+      // cout << "write over" << endl;
       break;
     }
     else if (static_cast<size_t>(len) > iov_[0].iov_len) {
@@ -123,16 +128,16 @@ ssize_t http_conn::write(int* saveErrno)
         write_buffer.retriveAll();
         iov_[0].iov_len = 0;
       }
-      cout << "write1 over" << endl;
+      // cout << "write1 over" << endl;
     }
     else {
       iov_[0].iov_base = (uint8_t*)iov_[0].iov_base + len;
       iov_[0].iov_len -= len;
       write_buffer.retrieve(len);
-      cout << "write0 over" << endl;
+      // cout << "write0 over" << endl;
     }
   }
-  cout << "write end and len:" << len << endl;
+  // cout << "write end and len:" << cnt << endl;
   return cnt;
 }
 
@@ -140,9 +145,23 @@ ssize_t http_conn::write(int* saveErrno)
 void http_conn::process()
 {
   // cout << "begin process" << endl;
+
+  int readNum = read(&errno);
+  if (readNum < 0)
+  {
+    // cout << "readNum:" << readNum << endl;
+    // modfd(m_epollfd, m_sockfd, EPOLLIN);
+    return;
+  }
+
   m_request.init();
   if (m_buffer.readable() <= 0)
+  {
+    cout << "zero" << endl;
+    modfd(m_epollfd, m_sockfd, EPOLLIN);
     return;
+  }
+
   // cout << "parse begin" << endl;
   if (m_request.parse(m_buffer))
   {
@@ -170,22 +189,33 @@ void http_conn::process()
     iov_[1].iov_len = m_response.fileLen();
     iovCnt_ = 2;
   }
+  // 变成监听写事件
+  // write_buffer.print_test();
+  // 注意，否则有可能出现读脏数据
+  m_buffer.retriveAll();
   modfd(m_epollfd, m_sockfd, EPOLLOUT);
 }
 
 void http_conn::process_afterWrite() {
   // int ret = -1;
-  cout << "continue keepalive" << endl;
+  // cout << "continue keepalive" << endl;
+  // write_buffer.print_test();
+  int writeNum = write(&errno);
+  if (writeNum < 0) {
+    modfd(m_epollfd, m_sockfd, EPOLLIN);
+    return;
+  }
   if (m_request.isKeepAlive())
   {
-    cout << "keepalive success" << endl;
+    // cout << "keepalive success" << endl;
+    write_buffer.retriveAll();
     modfd(m_epollfd, m_sockfd, EPOLLIN);
     return;
   }
   else
   {
-    cout << "keepalive fail" << endl;
-    removefd(m_epollfd, m_sockfd);
+    // cout << "keepalive fail" << endl;
+    // removefd(m_epollfd, m_sockfd);
     Close();
   }
 }
